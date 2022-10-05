@@ -1,0 +1,115 @@
+---
+title: "Study of Cardiovascular Disease"
+author: "Wong Tiffany Hoi Ching"
+date: "6/6/2020"
+output: html_document
+---
+This project aims to study the realtionship of the health condition of a person and the presence or absence of cardiovascular disease with the data set "cardio_train.csv", which is stored in the variable: disease.
+```{r, message = FALSE}
+library(data.table)
+library(tidyverse)
+library(glmnet)
+```
+
+```{r, echo = FALSE}
+disease <- fread("cardio_train.csv")
+disease$gender <- disease$gender - 1
+disease$cholesterol <- factor(disease$cholesterol)
+disease$gluc <- factor(disease$gluc)
+disease <- disease %>% select(!id)
+```
+
+Introduction of the data: \
+age: by days \
+gender: 0 for female, 1 for male \
+height: by cm \
+weight: by kg \
+ap_hi: systolic blood pressure \
+ap_lo: diastolic blood pressure \
+cholesterol: 1 for normal cholesterol level, 2 for cholesterol level above normal, 3 for cholesterol level well above normal \
+gluc: 1 for normal glucose level, 2 for glucose level above normal, 3 for glucose level well above normal \
+smoke: 0 for smoker, 1 for non-smoker \
+alco: 0 for no alcohol intake, 1 for has alcohol intake \
+active: 0 for no physical activity, 1 for has physical activity \
+cardio: 0 for absence of cardiovascular disease, 1 for Presence of cardiovascular disease 
+```{r, echo = FALSE}
+head(disease)
+```
+
+
+## Question 1
+What is the corresponding importance of the variables in the model to the result -- presence or absence of cardiovascular disease?
+```{r, echo = FALSE}
+#family: the response type. Use “binomial” for a binary outcome variable
+#alpha: “1” for lasso regression
+#lamba: a numeric value defining the amount of shrinkage. The best lambda for your data, can be defined as the lambda that minimize the cross-validation prediction error rate.
+
+y <- disease$cardio
+x <- model.matrix(cardio~. , disease)[,-1]
+
+lambda1 <- coef(glmnet(x, y, family = "binomial", alpha = 1, lambda = 0.11))
+lambda2 <- coef(glmnet(x, y, family = "binomial", alpha = 1, lambda = 0.09))
+lambda3 <- coef(glmnet(x, y, family = "binomial", alpha = 1, lambda = 0.05))
+lambda4 <- coef(glmnet(x, y, family = "binomial", alpha = 1, lambda = 0.03))
+lambda5 <- coef(glmnet(x, y, family = "binomial", alpha = 1, lambda = 0.025))
+cbind(lambda1, lambda2, lambda3, lambda4, lambda5)
+```
+To find the importance of each variable in the model, LASSO regression analysis is applied with the package “glmnet”. In this analysis, the earlier the coefficient becomes nonzero, the more important is the variable.
+
+With the penalty parameter lambda starting at the value of 0.11, only age has non-zero coefficient, meaning age is the most important variable in this model. This is reasonable as older people always have a higher chance to have cardiovascular disease than youngsters even the former have a healthier life due to physical deterioration that may lead to weaker blood circulation.
+
+By decreasing the penalty value from 0.11 to 0.09, 0.05, 0.03 and 0.025, coefficients of cholesterol3 (cholesterol level well above normal), weight, cholesterol2 (cholesterol level above normal) and ap_lo (diastolic blood pressure) then becomes non-zero sequentially. This result is not surprising as these factors are highly correlated to the function of the arteries, for example, a person who is overweight and has fatty substances like cholesterol clogging the arteries, the arteries become narrowed and blood flow to the heart will be slowed down and cause heart disease.
+
+So, the top 5 important covariates are age, cholesterol3, weight, cholesterol2 and ap_lo.
+
+```{r, echo = FALSE}
+#Find the optimal value of lambda that minimizes the cross-validation error
+glmnet_mod <- glmnet(x, y, alpha = 1, family = "binomial")
+plot(glmnet_mod, label=TRUE)
+```
+\
+This line graph also showed an overview of the importance of each variable in the model. When lambda decreases from left to right, there are more variables' coefficients diverge from the horizontal line 0.0 (i.e. the number of coefficients being non-zero at the different stages are labeled on the top of the graph). However, it is still obvious that variable 8 (cholesterol3) and 7 (cholesterol2) diverge at the beginning, which is both included in the top5 importance of the above numeric conclusion. So, this graph helps verifies the conclusion too. (Noted that the numerical labels correspond to the order of variables in the above coefficient list, starting from age)
+
+
+## Question 2 
+Will the habit of smoking or drinking lead to a higher probability to get heart disease?
+```{r, echo = FALSE}
+cardio_smoke_alco <- glm(cardio ~ active*smoke + active*alco, data = disease, family = "binomial")
+coeff <- coef(summary(cardio_smoke_alco))
+coeff
+```
+People always say that smoking and drinking alcohol are harmful to our health. It is interesting to know which habit will be do more harm to our heart by comparing the difference in the estimated probabilities of having heart disease between people who have different living habits. Noted that, this analysis does not include any other variables that are found to be important in the previous LASSO analysis. Instead, two interaction terms between the two habits of smoking and drinking and exercising are used in the logistic model. So, the probabilities estimated here is in terms of the average on all those variables.
+
+On average, among people who do not have the habit to exercise actively, the logit probability of having the cardiovascular disease for smokers is 0.08813241 higher than non-smokers. However, the logit probability is 0.03230878 lower for drinkers than non-drinkers.
+
+Surprisingly, among people who have the habit to exercise actively, the logit probability of having the cardiovascular disease for smokers is 0.136522 (0.08813241 - 0.2246544) lower than non-smokers and 0.01057448 (-0.03230878 + 0.0217343) lower for drinkers than non-drinkers on average.
+
+This result showed that having the habit of smoking or drinking may not always be harmful to people's health. In some situations, if you also do exercise, these habits can lower the logit probability of having heart disease.
+
+
+## Question 3
+Can we predict whether a person has the cardiovascular disease by having only parts of the health condition information? Or is it better to guess randomly?
+```{r, echo = FALSE}
+cat("Random guess probability:", mean(disease$cardio), "\n")
+set.seed(123)
+partly_disease <- disease %>% select(age, gender, height, weight, cholesterol, smoke, alco, active, cardio)
+n <- dim(partly_disease)[1]
+randomIndex <- sample(n)
+train <-  partly_disease[randomIndex[1:28000],]
+validation <- partly_disease[randomIndex[28001:56000],]
+test <- partly_disease[randomIndex[56001:70000],]
+partly_mod <- glm(cardio ~ ., data = train, family = "binomial")
+
+acc <- function(y, yhat) mean(y == yhat)
+f1 <- function(x) x > 0.5
+cat("Validation set accuracy:",acc(validation$cardio, f1(predict(partly_mod, validation, type = "response"))), "\n")
+cat("Test set accuracy:", acc(test$cardio, f1(predict(partly_mod, test, type = "response"))))
+```
+When we do a random guess of whether a person has cardiovascular disease or not, we have actually around 0.5 probability to guess the right answer as there are 49.97% people who have the disease in this data set. 
+
+In reality, people rarely have all data for all variables in the dataset. So, I have trained a model that requires only the information of age, gender, height, weight, cholesterol level, and habits of smoking, drinking, and exercising to do the prediction of whether he/she has heart disease with cross-validation method. To do so, 40% of data are split for train and validation set respectively, and the remaining 20% for the test set. 
+
+To verify the model, the validation data set is plugged into the model with an accuracy of 64.17857%, which ishigher than random guessing. Then, testing the model again with the test set, the accuracy is 64.5%, higher than making a random guess. So, even with basic personal information, this model can still give a better prediction than guessing randomly.
+
+
+
